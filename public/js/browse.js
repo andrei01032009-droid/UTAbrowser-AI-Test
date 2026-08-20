@@ -33,10 +33,11 @@
      (нужен, когда сервер UTA не может сам выйти в интернет)
      ============================================================ */
   const CORS_PROXIES = [
-    (u) => 'https://api.allorigins.win/raw?url=' + encodeURIComponent(u),
-    (u) => 'https://api.codetabs.com/v1/proxy?quest=' + encodeURIComponent(u),
+    (u) => 'https://proxy.corsfix.com/?' + u,
     (u) => 'https://api.cors.lol/?url=' + encodeURIComponent(u),
     (u) => 'https://cors.eu.org/' + encodeURIComponent(u),
+    (u) => 'https://api.allorigins.win/raw?url=' + encodeURIComponent(u),
+    (u) => 'https://api.codetabs.com/v1/proxy?quest=' + encodeURIComponent(u),
   ];
 
   // Скрипт, встраиваемый в страницы запасного режима.
@@ -137,6 +138,125 @@
     }
   }
 
+  // ---------- Режим чтения (последний запасной вариант) ----------
+  // Берёт текст страницы через r.jina.ai и красиво показывает его в UTA.
+  function escapeHtmlText(s) {
+    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+
+  function inlineMd(s) {
+    return s
+      .replace(/!\[([^\]]*)\]\(([^)\s]+)(?:\s+"[^"]*")?\)/g, (m, alt, url) =>
+        `<img src="${url}" alt="${escapeHtmlText(alt)}" loading="lazy">`)
+      .replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, '<a href="$2">$1</a>')
+      .replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>')
+      .replace(/`([^`]+)`/g, '<code>$1</code>');
+  }
+
+  function linkifyText(s) {
+    return s.replace(/(^|[\s(])(https?:\/\/[^\s<>"')\]]+)/g, '$1<a href="$2">$2</a>');
+  }
+
+  function markdownToHtml(md) {
+    const lines = String(md).split(/\r?\n/);
+    let html = '';
+    let inList = false;
+    for (const raw of lines) {
+      const line = raw.replace(/\r$/, '');
+      if (!line.trim()) {
+        if (inList) { html += '</ul>'; inList = false; }
+        continue;
+      }
+      const heading = line.match(/^(#{1,3})\s+(.*)$/);
+      if (heading) {
+        if (inList) { html += '</ul>'; inList = false; }
+        const level = heading[1].length;
+        html += `<h${level}>${linkifyText(inlineMd(escapeHtmlText(heading[2])))}</h${level}>`;
+      } else if (/^[-*]\s+/.test(line)) {
+        if (!inList) { html += '<ul>'; inList = true; }
+        html += `<li>${linkifyText(inlineMd(escapeHtmlText(line.replace(/^[-*]\s+/, ''))))}</li>`;
+      } else {
+        if (inList) { html += '</ul>'; inList = false; }
+        html += `<p>${linkifyText(inlineMd(escapeHtmlText(line)))}</p>`;
+      }
+    }
+    if (inList) html += '</ul>';
+    return html;
+  }
+
+  function readerPage(url, md) {
+    const host = (() => {
+      try { return new URL(url).hostname; } catch { return url; }
+    })();
+    return `<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="referrer" content="no-referrer">
+<title>Чтение — ${escapeHtmlText(host)}</title>
+<style>
+  body { margin:0; background:#0e1116; color:#e8edf4;
+         font-family:system-ui,Segoe UI,Roboto,sans-serif; line-height:1.7; }
+  .bar { position:sticky; top:0; background:#131821; border-bottom:1px solid #242e3d;
+         padding:10px 16px; font-size:12px; color:#8b95a5; display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  .badge { background:linear-gradient(90deg,#ff7a45,#ff3d81); color:#fff; padding:2px 10px;
+           border-radius:999px; font-weight:600; }
+  .content { max-width:760px; margin:0 auto; padding:24px 20px 60px; word-break:break-word; }
+  h1,h2,h3 { line-height:1.3; margin:1.2em 0 .5em; }
+  h1 { font-size:24px; } h2 { font-size:20px; } h3 { font-size:17px; }
+  p { margin:.6em 0; }
+  a { color:#4da3ff; }
+  img { max-width:100%; height:auto; border-radius:8px; margin:.5em 0; }
+  code { background:#1c2431; padding:2px 6px; border-radius:6px; font-size:13px; }
+  ul { padding-left:22px; }
+  li { margin:.3em 0; }
+</style>
+</head>
+<body>
+  <div class="bar">
+    <span class="badge">📖 Режим чтения</span>
+    <span>${escapeHtmlText(host)}</span>
+    <a href="${escapeHtmlText(url)}" target="_blank" rel="noopener" style="color:#4da3ff">Открыть оригинал ↗</a>
+  </div>
+  <div class="content">
+    ${markdownToHtml(md)}
+  </div>
+  ${NAV_FALLBACK.replace('__FINAL_URL__', JSON.stringify(url))}
+</body>
+</html>`;
+  }
+
+  async function readerLoad(url, entry) {
+    pendingMode = 'fallback';
+    pendingSince = Date.now();
+    loadingLine.classList.add('active');
+    try {
+      const res = await fetchWithTimeout('https://r.jina.ai/' + url, 25000);
+      if (!res.ok) throw new Error('jina failed');
+      const md = await res.text();
+      entry.blobUrl = URL.createObjectURL(
+        new Blob([readerPage(url, md)], { type: 'text/html; charset=utf-8' })
+      );
+      entry.mode = 'fallback';
+      entry.reader = true;
+      entry.finalUrl = url;
+      entry.title = 'Чтение — ' + ((() => {
+        try { return new URL(url).hostname; } catch { return url; }
+      })());
+      U.addHistory({ url, title: entry.title, time: Date.now() });
+      U.toast('Сайт открыт в режиме чтения 📖');
+      // Полоску загрузки уберёт сообщение от самой страницы
+      navigate(entry);
+    } catch {
+      // Режим чтения тоже не сработал — показываем страницу ошибки сервера,
+      // на ней есть кнопка «Открыть напрямую в новой вкладке».
+      pendingMode = 'failed';
+      loadingLine.classList.remove('active');
+      frame.src = U.proxied(url);
+      U.toast('Не удалось загрузить сайт — открой его напрямую в новой вкладке');
+    }
+  }
+
   // Загрузка страницы в запасном режиме (перебираем прокси по очереди).
   // reuse=true — перезаписать текущую запись истории вместо новой.
   async function fallbackLoad(url, { reuse = false } = {}) {
@@ -189,12 +309,8 @@
       }
     }
 
-    // Ни один прокси не сработал — показываем страницу ошибки сервера,
-    // на ней есть кнопка «Открыть напрямую в новой вкладке».
-    pendingMode = 'failed';
-    loadingLine.classList.remove('active');
-    frame.src = U.proxied(url);
-    U.toast('Не удалось загрузить сайт — открой его напрямую в новой вкладке');
+    // Прокси не сработали — пробуем режим чтения через r.jina.ai
+    readerLoad(url, entry);
   }
 
   /* ============================================================
@@ -363,6 +479,10 @@
 
     if (pendingMode === 'server' && wait > 6000) {
       // Сервер что-то отдал без сообщения (картинка, PDF) — прячем полоску
+      loadingLine.classList.remove('active');
+    }
+    if (pendingMode === 'fallback' && wait > 30000) {
+      // Страница запасного режима не ответила — прячем полоску
       loadingLine.classList.remove('active');
     }
     // Если сервер вообще не может выходить в сеть, а сайт не загрузился, —
