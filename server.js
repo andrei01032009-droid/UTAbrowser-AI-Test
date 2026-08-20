@@ -1,7 +1,7 @@
 // ============================================================
 //  UTA Browser — сервер
-//  Простой браузер: главная страница, просмотр сайтов через
-//  встроенный прокси и вход в аккаунт через Google (OAuth 2.0).
+//  Простой браузер: главная страница с поиском, открытие
+//  сайтов напрямую и вход в аккаунт через Google (OAuth 2.0).
 // ============================================================
 require('dotenv').config();
 
@@ -9,7 +9,6 @@ const express = require('express');
 const path = require('path');
 const crypto = require('crypto');
 const Store = require('./lib/store');
-const { fetchAndRewrite } = require('./lib/proxy');
 
 const PORT = process.env.PORT || 3000;
 const SESSION_DAYS = 30;
@@ -69,7 +68,6 @@ app.use((req, res, next) => {
 // ---------- Страницы ----------
 app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
 app.get('/login', (req, res) => res.sendFile(path.join(__dirname, 'public', 'login.html')));
-app.get('/browse', (req, res) => res.sendFile(path.join(__dirname, 'public', 'browse.html')));
 
 // ---------- API аккаунта ----------
 app.get('/api/me', (req, res) => {
@@ -84,24 +82,6 @@ app.post('/api/logout', (req, res) => {
 
 app.get('/api/authinfo', (req, res) => {
   res.json({ google: isGoogleConfigured });
-});
-
-// Может ли сервер сам выходить в интернет? (кэш 10 минут)
-let serverCapCache = { at: 0, value: null };
-app.get('/api/servercap', async (req, res) => {
-  const now = Date.now();
-  if (serverCapCache.value === null || now - serverCapCache.at > 10 * 60 * 1000) {
-    try {
-      await fetch('https://example.com/', {
-        method: 'HEAD',
-        signal: AbortSignal.timeout(6000),
-      });
-      serverCapCache = { at: now, value: 'direct' };
-    } catch {
-      serverCapCache = { at: now, value: 'limited' };
-    }
-  }
-  res.json({ egress: serverCapCache.value });
 });
 
 // ---------- Вход через Google ----------
@@ -197,79 +177,6 @@ app.get('/auth/demo', (req, res) => {
   setSessionCookie(res, token);
   res.redirect('/?welcome=1');
 });
-
-// ---------- Прокси сайтов ----------
-const ERROR_PAGE = (url, rawUrl, message) => `<!doctype html>
-<html lang="ru">
-<head>
-<meta charset="utf-8">
-<meta name="referrer" content="no-referrer">
-<title>Не удалось открыть сайт</title>
-<style>
-  body { margin:0; min-height:100vh; display:flex; align-items:center; justify-content:center;
-         background:#0e1116; color:#e8edf4; font-family:system-ui,Segoe UI,Roboto,sans-serif; }
-  .card { max-width:460px; text-align:center; padding:40px; }
-  .icon { font-size:56px; }
-  h1 { font-size:22px; margin:16px 0 8px; }
-  p { color:#8b95a5; font-size:14px; line-height:1.6; word-break:break-all; }
-  .url { color:#ff7a45; }
-  .btn { display:inline-block; margin-top:14px; padding:10px 20px; border-radius:10px;
-         background:linear-gradient(90deg,#ff7a45,#ff3d81); color:#fff; text-decoration:none; font-size:14px; font-weight:600; }
-</style>
-</head>
-<body>
-  <div class="card">
-    <div class="icon">🛰️</div>
-    <h1>Не удалось открыть сайт</h1>
-    <p><span class="url">${url}</span></p>
-    <p>${message}</p>
-    <p>Проверь адрес и попробуй ещё раз. Некоторые сайты блокируют загрузку из браузеров-прокси.</p>
-    <a class="btn" href="${rawUrl}" target="_blank" rel="noopener">Открыть напрямую в новой вкладке ↗</a>
-  </div>
-  <script>try{parent.postMessage({uta:true,type:'error'},'*')}catch(e){}</script>
-</body>
-</html>`;
-
-async function handleProxy(req, res) {
-  const url = req.query.url;
-  if (!url || !/^https?:\/\//i.test(url)) return res.redirect('/');
-
-  let target;
-  try {
-    target = new URL(url);
-  } catch {
-    return res.redirect('/');
-  }
-
-  // Защита от зацикливания: не проксируем сами себя
-  if (['localhost', '127.0.0.1'].includes(target.hostname) || target.hostname === req.hostname) {
-    return res.status(403).send('Доступ запрещён');
-  }
-
-  const body = req.method === 'POST' ? new URLSearchParams(req.body || {}).toString() : null;
-
-  try {
-    const result = await fetchAndRewrite(url, { method: req.method, body, root: baseUrl(req) });
-    res.setHeader('Content-Type', result.contentType);
-    if (!result.binary) {
-      // Песочница: скрипты сайта работают, но не имеют доступа к данным UTA
-      res.setHeader('Content-Security-Policy', 'sandbox allow-scripts allow-forms allow-popups');
-      res.setHeader('Cache-Control', 'no-store');
-    }
-    res.send(result.html);
-  } catch (err) {
-    console.error('Proxy error:', err.message);
-    const page = ERROR_PAGE(
-      String(url).slice(0, 200).replace(/</g, '&lt;'),
-      String(url).replace(/"/g, '&quot;'),
-      err.name === 'TimeoutError' ? 'Сайт слишком долго не отвечал (таймаут 20 секунд).' : 'Ошибка сети при загрузке страницы.'
-    );
-    res.status(502).setHeader('Content-Type', 'text/html; charset=utf-8').send(page);
-  }
-}
-
-app.get('/proxy', handleProxy);
-app.post('/proxy', handleProxy);
 
 // ---------- 404 ----------
 app.use((req, res) => {

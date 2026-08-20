@@ -55,6 +55,7 @@ button {
 .btn {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 8px;
   border: 1px solid var(--border);
   background: var(--surface-2);
@@ -62,6 +63,7 @@ button {
   padding: 10px 18px;
   border-radius: 10px;
   font-size: 14px;
+  text-decoration: none;
   transition: background 0.15s, border-color 0.15s, transform 0.05s;
 }
 
@@ -479,6 +481,7 @@ button {
   padding: 12px 16px;
   font-size: 15px;
   font-weight: 500;
+  text-decoration: none;
   transition: filter 0.15s, transform 0.05s;
 }
 

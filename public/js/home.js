@@ -43,11 +43,15 @@
     e.preventDefault();
     const target = U.buildTarget(input.value, currentEngine());
     if (!target.value) return;
-    if (target.type === 'url') {
-      location.href = '/browse?url=' + encodeURIComponent(target.value);
-    } else {
-      location.href = '/browse?q=' + encodeURIComponent(input.value.trim()) + '&engine=' + currentEngine();
-    }
+    // Открываем сайт или результаты поиска напрямую в новой вкладке
+    U.openTarget(target.value);
+    U.addHistory({
+      url: target.value,
+      title: target.type === 'search' ? 'Поиск: ' + input.value.trim() : target.value,
+      time: Date.now(),
+    });
+    renderHistory();
+    input.value = '';
   });
 
   // ---------- История ----------
@@ -56,7 +60,7 @@
     clearBtn.style.display = list.length ? '' : 'none';
     if (!list.length) {
       historyGrid.innerHTML =
-        '<div class="empty-note" style="grid-column:1/-1">Здесь появятся сайты, которые ты посещал в UTA</div>';
+        '<div class="empty-note" style="grid-column:1/-1">Здесь появятся сайты, которые ты открывал через UTA</div>';
       return;
     }
     historyGrid.innerHTML = list
@@ -69,7 +73,7 @@
           }
         })();
         return `
-          <a class="history-card" href="/browse?url=${encodeURIComponent(h.url)}">
+          <a class="history-card" href="${h.url.replace(/"/g, '&quot;')}" target="_blank" rel="noopener">
             <div class="dot">${host.slice(0, 1).toUpperCase()}</div>
             <div class="info">
               <div class="title"></div>

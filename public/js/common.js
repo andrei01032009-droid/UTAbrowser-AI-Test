@@ -28,8 +28,19 @@ window.UTA = (function () {
     return { type: 'search', value: fn(s) };
   }
 
-  function proxied(url) {
-    return '/proxy?url=' + encodeURIComponent(url);
+  // Открыть адрес в новой вкладке (без прокси — напрямую).
+  function openTarget(url) {
+    try {
+      const a = document.createElement('a');
+      a.href = url;
+      a.target = '_blank';
+      a.rel = 'noopener';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+    } catch {
+      window.open(url, '_blank', 'noopener');
+    }
   }
 
   async function api(path, options) {
@@ -144,7 +155,7 @@ window.UTA = (function () {
     ENGINE_NAMES,
     isUrl,
     buildTarget,
-    proxied,
+    openTarget,
     api,
     getMe,
     getHistory,
